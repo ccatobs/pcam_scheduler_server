@@ -1,14 +1,12 @@
 from datetime import datetime
 import os
-import importlib
 import yaml
-import os, os.path as op
 import random
 import logging
 
 logger = logging.getLogger(__name__)
 
-from .utils import split_into_parts, send_request
+from .utils import split_into_parts, fetch_next_best_obs_unit, fetch_obs_unit_alternatives
 
 random.seed(int(datetime.now().timestamp()))
 
@@ -26,48 +24,49 @@ def dummy_handler(t0, t1, policy_config={}):
     return commands
 
 
-def rest_handler(t0, t1, policy_config={}):
-    config_path = policy_config.pop("config_path")
-    program = policy_config.pop('program')
+def ops_db_handler(t0, t1, policy_config={}):
+    """Handler that fetches the next best obs unit from ops-db-api and returns an observation script.
 
-    config_base = os.environ['SCHED_CFG_DIR']
-    script_base = os.environ['SCHED_SCRIPTS_DIR']
+    Fetches next_best and next_alternatives from {OPS_DB_API_URL}/scheduler/,
+    merges with user-defined params from policy_config, writes obs_config.yaml
+    into SCHED_SCRIPTS_DIR, then returns a dict with:
+        commands: str  - contents of observation.py
+        next_best: dict
+        next_alternatives: dict
+    """
+    next_best = fetch_next_best_obs_unit(os.environ.get('OPS_DB_API_URL'), os.environ.get('OPS_DB_API_TOKEN'))
+    next_alternatives = fetch_obs_unit_alternatives(os.environ.get('OPS_DB_API_URL'), os.environ.get('OPS_DB_API_TOKEN'))
+    logger.info(f"Next best obs unit: {next_best!r}")
 
-    try:
-        with open(op.join(config_base, config_path)) as f:
-            f = os.path.expandvars(f.read())
-        config = yaml.safe_load(f)
-    except:
-        raise ValueError(f"Failed to parse yaml config {config_path}: {e}")
+    obs_config = {
+        'obs_unit_name': next_best.get('obs_unit_name'),
+        'start_time': next_best.get('start_time'),
+        'elevation': next_best.get('best_elevation'),
+        'home_at_end': policy_config.get('home_at_end', False),
+        'instrument_config': policy_config.get('instrument_config', 'no_retuning'),
+        't_sec': policy_config.get('t_sec', 1800),
+        'az_speed': policy_config.get('az_speed', 1.0),
+    }
+    logger.info(f"obs_config: {obs_config!r}")
 
-    # merge user config into loaded config
-    config = {**config, **policy_config}
+    config_path = os.path.join(os.environ['SCHED_SCRIPTS_DIR'], 'obs_config.yaml')
+    with open(config_path, 'w') as f:
+        yaml.dump(obs_config, f, default_flow_style=False)
+    logger.info(f"Wrote obs_config to {config_path}")
 
-    module_path = op.join(script_base, program) + (".py" if not program.endswith(".py") else "")
+    script_path = os.path.join(os.environ['SCHED_SCRIPTS_DIR'], 'observation.py')
+    with open(script_path) as f:
+        commands = f.read()
 
-    if not op.exists(module_path):
-        raise FileNotFoundError(f"Program {program} not found")
-
-    # load module from scheduler-scripts
-    # updated module will not automatically be reloaded
-    # it is expected the server will restart on updating
-    # schedule program scripts
-    module_name = "_" + program.replace(".py", "").replace("/", ".")
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    config['t0'] = t0
-    config['t1'] = t1
-
-    schedule = module.main(**config)
-
-    return schedule
-
+    return {
+        'commands': commands,
+        'next_best': next_best,
+        'next_alternatives': next_alternatives,
+    }
 
 HANDLERS = {
     'dummy': dummy_handler,
-    'rest': rest_handler,
+    'ops_db': ops_db_handler,
 }
 
 def get_handler(policy_name):

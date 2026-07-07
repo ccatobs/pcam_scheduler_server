@@ -94,43 +94,29 @@ def schedule():
             policy_config = get_preset_config(config_preset_name)
             utils.nested_update(policy_config, user_policy_config, new_keys_allowed=True)
 
-        # get scheduler commands
-        commands = handler.get_handler(policy_name)(t0, t1, policy_config)
+        # get scheduler commands; handlers may return a plain string or a dict
+        # with 'commands' plus optional extra keys (e.g. next_best, next_alternatives)
+        result = handler.get_handler(policy_name)(t0, t1, policy_config)
 
     except Exception as e:
         response = flask.jsonify({
             'status': 'error',
-            'message': f'Error: {e}'
+            'message': f'Error: {e}',
+            'policy_config':f'policy config:{policy_config}'
         })
         response.status_code = 500
         app.logger.error(traceback.format_exc())
         return response
 
-    response = flask.jsonify({
-        'status': 'ok',
-        'commands': commands,
-        'message': 'Success'
-    })
+    if isinstance(result, dict):
+        payload = {'status': 'ok', 'message': 'Success', **result}
+    else:
+        payload = {'status': 'ok', 'commands': result, 'message': 'Success'}
+
+    response = flask.jsonify(payload)
     response.status_code = 200
     return response
 
 def get_preset_config(preset_name, default={}):
-    presets = {
-        'rest.satp1': {
-            'program': "sat/gen_schedule",
-            'config_path': "run_satp1.yaml",
-        },
-        'rest.satp2': {
-            'program': "sat/gen_schedule",
-            'config_path': "run_satp2.yaml",
-        },
-        'rest.satp3': {
-            'program': "sat/gen_schedule",
-            'config_path': "run_satp3.yaml",
-        },
-        'rest.lat': {
-            'program': "lat/gen_schedule",
-            'config_path': "run_lat.yaml",
-        }
-    }
+    presets = {}
     return presets.get(preset_name, default)
