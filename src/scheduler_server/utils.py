@@ -45,3 +45,15 @@ def send_request(url: str, headers: dict, queries: dict) -> dict:
     response = requests.get(url, headers=headers, params=queries)
     response.raise_for_status()
     return response.json()
+
+def fetch_next_best_obs_unit(base_url: str, token: str) -> dict:
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{base_url}/api/scheduler/next-best", headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+def fetch_obs_unit_alternatives(base_url: str, token: str) -> dict:
+    headers = {"Authorization": f"Bearer {token}"}
+    response = requests.get(f"{base_url}/api/scheduler/next-alternatives", headers=headers)
+    response.raise_for_status()
+    return response.json()
